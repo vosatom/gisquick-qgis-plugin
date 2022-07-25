@@ -1,0 +1,6 @@
+<RCC>
+    <qresource prefix="/plugins/gisquick-dev" >
+        <file>img/icon.svg</file>
+        <file>img/settings.svg</file>
+    </qresource>
+</RCC>
