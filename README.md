@@ -1,7 +1,5 @@
 # QGIS plugin for Gisquick platform
 
-```
-
 ## Development
 
 ### Build plugin's library
