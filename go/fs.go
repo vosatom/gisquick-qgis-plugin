@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,16 +19,6 @@ type FileInfo struct {
 	Hash  string `json:"hash"`
 	Size  int64  `json:"size"`
 	Mtime int64  `json:"mtime"`
-}
-
-func DBHash(path string) (string, error) {
-	cmdOut, err := exec.Command("dbhash", path).Output()
-	if err != nil {
-		log.Println("ErrNotFound", errors.Is(err, exec.ErrNotFound))
-		return "", fmt.Errorf("executing dbhash command: %w", err)
-	}
-	hash := strings.Split(string(cmdOut), " ")[0]
-	return hash, nil
 }
 
 // Computes SHA-1 hash of file
@@ -47,18 +36,20 @@ func Sha1(path string) (string, error) {
 }
 
 // Computes hash of the file (SHA-1 or dbhash)
-func Checksum(path string) (string, error) {
-	if strings.ToLower(filepath.Ext(path)) == ".gpkg" {
-		dbhash, err := DBHash(path)
-		if err == nil {
-			return "dbhash:" + dbhash, nil
+func (c *Client) Checksum(path string) (string, error) {
+	if c.dbhashCmd != "" && strings.ToLower(filepath.Ext(path)) == ".gpkg" {
+		cmdOut, err := exec.Command(c.dbhashCmd, path).Output()
+		if err != nil { // errors.Is(err, exec.ErrNotFound)
+			return "", fmt.Errorf("executing dbhash command: %w", err)
 		}
+		hash := strings.Split(string(cmdOut), " ")[0]
+		return "dbhash:" + hash, nil
 	}
 	return Sha1(path)
 }
 
 // Collects information about files in given directory
-func ListDir(root string, checksum bool) (*[]FileInfo, error) {
+func (c *Client) ListDir(root string, checksum bool) (*[]FileInfo, error) {
 	var files []FileInfo = []FileInfo{}
 	excludeExtRegex := regexp.MustCompile(`(?i).*\.(gpkg-wal|gpkg-shm)$`)
 	defaultFileFilter := func(path string) bool {
@@ -85,7 +76,7 @@ func ListDir(root string, checksum bool) (*[]FileInfo, error) {
 			if fileFilter(relPath) {
 				hash := ""
 				if checksum {
-					if hash, err = Checksum(path); err != nil {
+					if hash, err = c.Checksum(path); err != nil {
 						return err
 					}
 				}

@@ -15,8 +15,10 @@ import (
 	"net/textproto"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -34,6 +36,7 @@ type Client struct {
 	OnMessageCallback func([]byte) string
 	messageHandlers   map[string]messageHandler
 	cancelUpload      context.CancelFunc
+	dbhashCmd         string
 }
 
 type messageHandler func(msg message) error
@@ -48,6 +51,11 @@ type genericMessage struct {
 	Type   string      `json:"type"`
 	Status int         `json:"status,omitempty"`
 	Data   interface{} `json:"data"`
+}
+
+type pluginStatusPayload struct {
+	Client        string `json:"client"`
+	DbhashSupport bool   `json:"dbhash"`
 }
 
 // Creates a new Gisquick plugin client
@@ -112,7 +120,14 @@ func (c *Client) registerHandlers() {
 }
 
 func (c *Client) handlePluginStatus(msg message) error {
-	data := map[string]string{"client": c.ClientInfo}
+	data := pluginStatusPayload{
+		Client:        c.ClientInfo,
+		DbhashSupport: c.dbhashCmd != "",
+	}
+	// data := map[string]interface{}{
+	// 	"client": c.ClientInfo,
+	// 	"dbhash": c.dbhashCmd != "",
+	// }
 	return c.sendResponseMessage("PluginStatus", data)
 }
 
@@ -132,7 +147,7 @@ func (c *Client) handleProjectFiles(msg message) error {
 	}
 	var directory string
 	json.Unmarshal(projDirMsg.Data, &directory)
-	files, err := ListDir(directory, true)
+	files, err := c.ListDir(directory, true)
 
 	if err != nil {
 		return err
@@ -196,7 +211,7 @@ func (c *Client) handleUploadFiles(msg message) error {
 					params.Files[i].Mtime = finfo.ModTime().Unix()
 					params.Files[i].Size = finfo.Size()
 					if f.Hash == "" {
-						hash, err := Checksum(p)
+						hash, err := c.Checksum(p)
 						if err != nil {
 							errChan <- err
 							return
@@ -345,6 +360,16 @@ func (c *Client) Start(OnConnectionEstabilished func()) error {
 	c.WsConn = wsConn
 	defer wsConn.Close()
 
+	// dbhash detection
+	cmdName := "dbhash"
+	if runtime.GOOS == "windows" {
+		cmdName += ".exe"
+	}
+	c.dbhashCmd, err = exec.LookPath(cmdName)
+	if err != nil {
+		localCmd, _ := filepath.Abs(cmdName)
+		c.dbhashCmd, err = exec.LookPath(localCmd)
+	}
 	done := make(chan struct{})
 
 	go func() {
