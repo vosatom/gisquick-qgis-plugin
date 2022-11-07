@@ -69,6 +69,10 @@ func (c *Client) ListDir(root string, checksum bool) (*[]FileInfo, error) {
 	root, _ = filepath.Abs(root)
 	err = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				fmt.Printf("WARN: file does not exists, skipping: %s\n", path)
+				return nil
+			}
 			return err
 		}
 		if !info.IsDir() {
