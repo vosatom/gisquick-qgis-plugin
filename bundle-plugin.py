@@ -7,16 +7,56 @@ import configparser
 from datetime import datetime, timezone
 
 
-def bundle_for_platform(lib_file, platform, metadata):
-    target_dir = os.path.join('dist', 'plugin', platform, 'gisquick')
-    dest_dir = os.path.join('dist', 'plugin', platform, 'gisquick', 'gisquick')
+class Target:
+    def __init__(self, platform, arch, lib_suffix, executable_sufix):
+        self.platform = platform
+        self.arch = arch
+        self.lib_suffix = lib_suffix
+        self.executable_sufix = executable_sufix
+
+Targets = {
+    'lin64': Target('lin64', 'linux_amd64', '.so', ''),
+    'win64': Target('win64', 'windows_amd64', '.dll', '.exe'),
+    'mac64': Target('mac64', 'darwin_amd64', '.dylib', '')
+}
+
+def read_metadata(filename):
+    config = configparser.ConfigParser()
+    config.optionxform = str
+    config.read(filename)
+    metadata = dict(config.items('general'))
+    # metadata['updated'] = datetime.now().isoformat()
+    metadata['updated'] = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z') # datetime.now().isoformat()
+    return metadata
+
+def create_dbhash_version(dest_dir):
+    config = configparser.ConfigParser()
+    config.optionxform = str
+    meta_filename = os.path.join(dest_dir, 'metadata.txt')
+    config.read(meta_filename)
+    config['general']['name'] += ' (with dbhash)'
+    config['general']['about'] += """ Version with SQLite's <a href="https://www.sqlite.org/dbhash.html">dbhash</a> program, recommended when working with Geopackage format."""
+    with open(meta_filename, 'w') as configfile:
+        config.write(configfile)
+
+
+def bundle_for_platform(target_name, dbhash=False):
+    target = Targets[target_name]
+    platform = target.platform
+    basename = 'gisquick' if not dbhash else 'gisquick_dbhash'
+    target_dir = os.path.join('dist', 'plugin', platform, basename)
+    dest_dir = os.path.join('dist', 'plugin', platform, basename, basename)
 
     shutil.copytree('python/', dest_dir, ignore=shutil.ignore_patterns('__pycache__'))
-    shutil.copy(os.path.join('dist', 'lib', lib_file), dest_dir)
-    name = 'gisquick.%s_%s' % (platform, metadata['version'])
-    shutil.make_archive(os.path.join(target_dir, name), 'zip', target_dir, 'gisquick')
+    shutil.copy(os.path.join('dist', 'lib', target.arch, 'gisquick' + target.lib_suffix), dest_dir)
+    if dbhash:
+        shutil.copy(os.path.join('dbhash', 'dist', target.arch, 'dbhash' + target.executable_sufix), dest_dir)
+        create_dbhash_version(dest_dir)
+
+    metadata = read_metadata(os.path.join(dest_dir, 'metadata.txt'))
+    name = '%s.%s_%s' % (basename, platform, metadata['version'])
+    shutil.make_archive(os.path.join(target_dir, name), 'zip', target_dir, basename)
     filename = '%s.zip' % name
-    metadata = dict(metadata)
     metadata['filename'] = filename
     icon = metadata.get('icon', None)
     if icon:
@@ -45,23 +85,13 @@ def get_metadata(config):
 
 
 if __name__ == '__main__':
-    config = configparser.ConfigParser()
-    config.optionxform = str
-    config.read('python/metadata.txt')
-    metadata = dict(config.items('general'))
-    # metadata['updated'] = datetime.now().isoformat()
-    metadata['updated'] = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z') # datetime.now().isoformat()
     
     shutil.rmtree('dist/plugin', ignore_errors=True)
 
-    # meta = get_metadata(config)
-    # print(meta)
-    # metadata = {
-    #     'version': version
-    # }
-    # with open('dist/metadata.json', 'w') as outfile:
-    #     json.dump(metadata, outfile)
+    bundle_for_platform('lin64')
+    bundle_for_platform('win64')
+    bundle_for_platform('mac64')
 
-    bundle_for_platform('linux_amd64/gisquick.so', 'lin64', metadata)
-    bundle_for_platform('windows_amd64/gisquick.dll', 'win64', metadata)
-    bundle_for_platform('darwin_amd64/gisquick.dylib', 'mac64', metadata)
+    bundle_for_platform('lin64', dbhash=True)
+    bundle_for_platform('win64', dbhash=True)
+    bundle_for_platform('mac64', dbhash=True)
