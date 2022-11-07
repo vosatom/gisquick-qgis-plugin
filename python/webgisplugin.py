@@ -438,7 +438,9 @@ class WebGisPlugin(object):
             if crs.isValid() and crs.authid() and crs.authid() not in projections:
                 projections[crs.authid()] = {
                     "is_geographic": crs.isGeographic(),
-                    "proj4": tc.calculateCoordinateOperation(wgs84, crs) or crs.toProj4()
+                    # calculateCoordinateOperation seems to not always produce valid proj4 definitions
+                    # "proj4": tc.calculateCoordinateOperation(wgs84, crs) or crs.toProj4()
+                    "proj4": crs.toProj4()
                 }
 
         units = {
