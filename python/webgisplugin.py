@@ -12,7 +12,7 @@ import urllib
 import hashlib
 import platform
 import configparser
-from urllib.parse import parse_qs, urlparse, urljoin
+from urllib.parse import parse_qs, urlparse, urljoin, unquote
 
 # Import the PyQt and QGIS libraries
 import PyQt5.uic
@@ -295,7 +295,7 @@ class WebGisPlugin(object):
                         # print(u)
                         if u.scheme == "file":
                             source_params = {
-                                "file": relativePath(u.path)
+                                "file": relativePath(unquote(u.path))
                             }
                     except:
                         pass
