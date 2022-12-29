@@ -344,6 +344,8 @@ class WebGisPlugin(object):
                 opts = None
                 if layer.type() == QgsMapLayerType.VectorLayer:
                     attributes = self.get_layer_attributes(layer)
+                    if attributes:
+                        meta["attributes"] = attributes
                     wfs = {
                         "query": layer.id() in wfs_info["query"],
                         "insert": layer.id() in wfs_info["insert"],
@@ -356,7 +358,6 @@ class WebGisPlugin(object):
                         "labels": layer.labelsEnabled(),
                         "wfs": wfs_flags
                     }
-                    meta["attributes"] = attributes
                     queryable = identifiable and wfs["query"]
                     flags.extend(flags_list(
                         query=queryable,
