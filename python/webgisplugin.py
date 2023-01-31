@@ -18,7 +18,7 @@ from urllib.parse import parse_qs, urlparse, urljoin, unquote
 import PyQt5.uic
 from PyQt5.QtCore import QDir, QFileInfo
 from qgis.core import (
-    Qgis, QgsMapLayer, QgsProject, QgsLayerTreeLayer, QgsLayoutItemLabel, QgsCoordinateReferenceSystem,
+    Qgis, QgsMapLayer, QgsProject, QgsLayerTreeLayer, QgsLayerTreeGroup, QgsLayoutItemLabel, QgsCoordinateReferenceSystem,
     QgsMapLayerType, QgsWkbTypes, QgsUnitTypes, QgsDataSourceUri, QgsFieldConstraints
 )
 # from qgis.server import QgsServerProjectUtils
@@ -172,16 +172,18 @@ class WebGisPlugin(object):
     def get_layers_tree(self):
         def visit_node(tree_node):
             if isinstance(tree_node, QgsLayerTreeLayer):
-                return {
-                  "id": tree_node.layer().id()
-                }
-            else:
+                if tree_node.layerId():
+                    return {
+                      "id": tree_node.layerId()
+                    }
+            elif isinstance(tree_node, QgsLayerTreeGroup):
                 children = []
                 
                 # print(tree_node.name(), tree_node.customProperty("wmsShortName"))
                 for child_tree_node in tree_node.children():
                     info = visit_node(child_tree_node)
-                    children.append(info)
+                    if info:
+                        children.append(info)
                 group = {
                     "name": tree_node.name(),
                     "layers": children
@@ -638,7 +640,7 @@ class WebGisPlugin(object):
             project.projectSaved.connect(self.on_project_change)
             project.cleared.connect(self.on_project_closed)
         else:
-            gisquick_ws.stop()
             project.readProject.disconnect(self.on_project_change)
             project.projectSaved.disconnect(self.on_project_change)
             project.cleared.disconnect(self.on_project_closed)
+            gisquick_ws.stop()
