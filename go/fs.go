@@ -49,11 +49,13 @@ func (c *Client) Checksum(path string) (string, error) {
 }
 
 // Collects information about files in given directory
-func (c *Client) ListDir(root string, checksum bool) (*[]FileInfo, error) {
+func (c *Client) ListDir(root string, checksum bool) ([]FileInfo, []FileInfo, error) {
 	var files []FileInfo = []FileInfo{}
-	excludeExtRegex := regexp.MustCompile(`(?i).*\.(gpkg-wal|gpkg-shm)$`)
+	var tempFiles []FileInfo = []FileInfo{}
+	temporaryFileRegex := regexp.MustCompile(`(?i).*\.(gpkg-wal|gpkg-shm)$`)
+	// excludeExtRegex := regexp.MustCompile(`(?i).*\.(gpkg-shm)$`)
 	defaultFileFilter := func(path string) bool {
-		return !strings.HasSuffix(path, "~") && !excludeExtRegex.Match([]byte(path))
+		return !strings.HasSuffix(path, "~") // && !excludeExtRegex.Match([]byte(path))
 	}
 	fileFilter := defaultFileFilter
 
@@ -63,7 +65,7 @@ func (c *Client) ListDir(root string, checksum bool) (*[]FileInfo, error) {
 			return defaultFileFilter(path) && !matcher.MatchesPath(path)
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return &files, fmt.Errorf("parsing .gisquickignore file: %w", err)
+		return files, tempFiles, fmt.Errorf("parsing .gisquickignore file: %w", err)
 	}
 
 	root, _ = filepath.Abs(root)
@@ -78,21 +80,25 @@ func (c *Client) ListDir(root string, checksum bool) (*[]FileInfo, error) {
 		if !info.IsDir() {
 			relPath := path[len(root)+1:]
 			if fileFilter(relPath) {
-				hash := ""
-				if checksum {
-					if hash, err = c.Checksum(path); err != nil {
-						return err
+				if temporaryFileRegex.Match([]byte(relPath)) {
+					tempFiles = append(tempFiles, FileInfo{relPath, "", info.Size(), info.ModTime().Unix()})
+				} else {
+					hash := ""
+					if checksum {
+						if hash, err = c.Checksum(path); err != nil {
+							return err
+						}
 					}
+					files = append(files, FileInfo{relPath, hash, info.Size(), info.ModTime().Unix()})
 				}
-				files = append(files, FileInfo{relPath, hash, info.Size(), info.ModTime().Unix()})
 			}
 		}
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return &files, nil
+	return files, tempFiles, nil
 }
 
 // Saves content from given reader into the file

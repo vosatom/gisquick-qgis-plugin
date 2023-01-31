@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -49,12 +50,20 @@ type messageHandler func(msg message) error
 
 type message struct {
 	Type   string          `json:"type"`
+	ID     string          `json:"id,omitempty"`
 	Status int             `json:"status,omitempty"`
 	Data   json.RawMessage `json:"data,omitempty"`
 }
 
 type genericMessage struct {
 	Type   string      `json:"type"`
+	Status int         `json:"status,omitempty"`
+	Data   interface{} `json:"data"`
+}
+
+type genericResponse struct {
+	Type   string      `json:"type"`
+	ID     string      `json:"id,omitempty"`
 	Status int         `json:"status,omitempty"`
 	Data   interface{} `json:"data"`
 }
@@ -99,9 +108,17 @@ func (c *Client) SendDataMessage(msgType string, data interface{}) error {
 	return c.SendJsonMessage(genericMessage{Type: msgType, Status: 200, Data: data})
 }
 
+func (c *Client) SendDataResponse(req message, data interface{}) error {
+	return c.SendJsonMessage(genericResponse{Type: req.Type, ID: req.ID, Status: 200, Data: data})
+}
+
 // sends error message
 func (c *Client) SendErrorMessage(msgType string, data interface{}) error {
 	return c.SendJsonMessage(genericMessage{Type: msgType, Status: 500, Data: data})
+}
+
+func (c *Client) SendErrorResponse(req message, data interface{}) error {
+	return c.SendJsonMessage(genericResponse{Type: req.Type, ID: req.ID, Status: 500, Data: data})
 }
 
 // send message to plugin handler and return response message
@@ -141,6 +158,8 @@ func (c *Client) registerHandlers() {
 	c.messageHandlers["ProjectFiles"] = c.handleProjectFiles
 	c.messageHandlers["AbortUpload"] = c.handleAbortUpload
 	c.messageHandlers["UploadFiles"] = c.handleUploadFiles
+	c.messageHandlers["FetchFiles"] = c.handleFetchFiles
+	c.messageHandlers["DeleteFiles"] = c.handleDeleteFiles
 }
 
 func (c *Client) handlePluginStatus(msg message) error {
@@ -172,23 +191,28 @@ func (c *Client) getProjectDirectory() (string, error) {
 
 func (c *Client) handleProjectFiles(msg message) error {
 	type filesMsg struct {
-		Directory string     `json:"directory"`
-		Files     []FileInfo `json:"files"`
+		Directory      string     `json:"directory"`
+		Files          []FileInfo `json:"files"`
+		TemporaryFiles []FileInfo `json:"temporary,omitempty"`
 	}
 
 	directory, err := c.getProjectDirectory()
 	if err != nil {
-		return c.SendErrorMessage(msg.Type, "Failed to get project directory: "+err.Error())
+		return c.SendErrorResponse(msg, "Failed to get project directory: "+err.Error())
 	}
-	files, err := c.ListDir(directory, true)
+	files, tempFiles, err := c.ListDir(directory, true)
+
 	if err != nil {
 		return err
 	}
-	for i, f := range *files {
-		(*files)[i].Path = filepath.ToSlash(f.Path)
+	for i, f := range files {
+		files[i].Path = filepath.ToSlash(f.Path)
 	}
-	data := filesMsg{Directory: directory, Files: *files}
-	return c.SendDataMessage(msg.Type, data)
+	for i, f := range tempFiles {
+		tempFiles[i].Path = filepath.ToSlash(f.Path)
+	}
+	data := filesMsg{Directory: directory, Files: files, TemporaryFiles: tempFiles}
+	return c.SendDataResponse(msg, data)
 }
 
 func (c *Client) handleAbortUpload(msg message) error {
@@ -212,7 +236,7 @@ func (c *Client) handleUploadFiles(msg message) error {
 
 	directory, err := c.getProjectDirectory()
 	if err != nil {
-		return c.SendErrorMessage(msg.Type, "Failed to get project directory: "+err.Error())
+		return c.SendErrorResponse(msg, "Failed to get project directory: "+err.Error())
 	}
 
 	go func() {
@@ -326,6 +350,123 @@ func (c *Client) handleUploadFiles(msg message) error {
 	return nil
 }
 
+func (c *Client) fetchFile(project, projectDir string, finfo FileInfo) (err error) {
+	relPath := filepath.FromSlash(finfo.Path)
+	destPath := filepath.Join(projectDir, relPath)
+	destDir := filepath.Dir(destPath)
+	if err := os.MkdirAll(destDir, 0777); err != nil {
+		return fmt.Errorf("creating file directory: %w", err)
+	}
+
+	u := path.Join("/api/project/file/", project, finfo.Path)
+	resp, err := c.httpClient.Get(c.Server + u)
+	if err != nil {
+		return fmt.Errorf("requesting file: %w", err)
+	}
+	defer resp.Body.Close()
+	f, err := os.CreateTemp(projectDir, "tmpfile-")
+	if err != nil {
+		return fmt.Errorf("creating temporary file: %w", err)
+	}
+
+	defer func() {
+		// Clean up in case we are returning with an error
+		if err != nil {
+			f.Close()
+			os.Remove(f.Name())
+		}
+	}()
+
+	if err = f.Chmod(0644); err != nil {
+		return
+	}
+	/*
+		sha := sha1.New()
+		dest := io.MultiWriter(f, sha)
+		if _, err = io.Copy(dest, resp.Body); err != nil {
+			return fmt.Errorf("writing to file: %w", err)
+		}
+	*/
+	if _, err = io.Copy(f, resp.Body); err != nil {
+		return fmt.Errorf("writing to file: %w", err)
+	}
+	if err = f.Close(); err != nil {
+		return
+	}
+	if finfo.Mtime > 0 {
+		lmtime := time.Unix(finfo.Mtime, 0)
+		if err := os.Chtimes(f.Name(), lmtime, lmtime); err != nil {
+			return fmt.Errorf("updating file's modification time: %w", err)
+		}
+	}
+	// fmt.Printf("%x - %s\n", sha.Sum(nil), finfo.Hash)
+	if err = os.Rename(f.Name(), destPath); err != nil {
+		return fmt.Errorf("renaming temporary file: %w", err)
+	}
+	return nil
+}
+
+func (c *Client) handleFetchFiles(msg message) error {
+	var params FilesParam
+	if err := json.Unmarshal(msg.Data, &params); err != nil {
+		return err
+	}
+	directory, err := c.getProjectDirectory()
+	if err != nil {
+		return fmt.Errorf("resolving project directory: %w", err)
+	}
+	directory = filepath.FromSlash(directory)
+	go func() {
+		for _, f := range params.Files {
+			info := map[string]string{
+				"file": f.Path,
+			}
+			if err := c.fetchFile(params.Project, directory, f); err != nil {
+				info["status"] = "error"
+				info["detail"] = err.Error()
+			} else {
+				info["status"] = "finished"
+			}
+			c.SendDataMessage("FetchStatus", info)
+		}
+		c.SendDataResponse(msg, nil)
+	}()
+	return nil
+}
+
+type DeleteFilesRequest struct {
+	Project string   `json:"project"`
+	Files   []string `json:"files"`
+}
+
+func (c *Client) handleDeleteFiles(msg message) error {
+	var params DeleteFilesRequest
+	if err := json.Unmarshal(msg.Data, &params); err != nil {
+		return err
+	}
+	directory, err := c.getProjectDirectory()
+	if err != nil {
+		return fmt.Errorf("resolving project directory: %w", err)
+	}
+	directory = filepath.FromSlash(directory)
+	var errPaths []string
+	for _, fpath := range params.Files {
+		absPath := filepath.Join(directory, filepath.FromSlash(fpath))
+		if err = os.Remove(absPath); err != nil {
+			errPaths = append(errPaths, fpath)
+		}
+	}
+	if len(errPaths) > 0 {
+		return c.SendErrorResponse(msg, errPaths)
+	}
+	if err = c.SendDataResponse(msg, nil); err != nil {
+		log.Println("failed to send ws message:", err)
+		time.Sleep(10 * time.Millisecond)
+		return c.SendDataResponse(msg, nil)
+	}
+	return nil
+}
+
 /* Normal methods */
 
 func (c *Client) login() error {
@@ -421,7 +562,7 @@ func (c *Client) Start(OnConnectionEstabilished func()) error {
 			if ok {
 				if err := msgHandler(msg); err != nil {
 					log.Println(err)
-					c.SendErrorMessage(msg.Type, err.Error())
+					c.SendErrorResponse(msg, err.Error())
 				}
 				continue
 			}
