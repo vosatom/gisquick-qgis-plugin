@@ -67,12 +67,7 @@ func SendMessage(msg string) {
 	if c == nil {
 		return
 	}
-	if c.WsConn == nil {
-		log.Println("WS Connection is not established")
-		return
-	}
-	err := c.WsConn.WriteMessage(websocket.TextMessage, []byte(msg))
-	if err != nil {
+	if err := c.SendRawMessage(websocket.TextMessage, []byte(msg)); err != nil {
 		log.Printf("Failed to send WS message: %s\n", err)
 		return
 	}

@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -31,13 +32,18 @@ type Client struct {
 	Password          string
 	ClientInfo        string
 	httpClient        *http.Client
-	WsConn            *websocket.Conn
+	wsConn            *websocket.Conn
+	wsMutex           sync.Mutex
 	interrupt         chan int
 	OnMessageCallback func([]byte) string
 	messageHandlers   map[string]messageHandler
 	cancelUpload      context.CancelFunc
 	dbhashCmd         string
 }
+
+var (
+	ErrConnectionNotEstablished = errors.New("WS Connection is not established")
+)
 
 type messageHandler func(msg message) error
 
@@ -70,14 +76,32 @@ func NewClient(url, user, password string) *Client {
 	return &c
 }
 
+func (c *Client) SendRawMessage(msgType int, data []byte) error {
+	if c.wsConn == nil {
+		return ErrConnectionNotEstablished
+	}
+	c.wsMutex.Lock()
+	defer c.wsMutex.Unlock()
+	return c.wsConn.WriteMessage(msgType, data)
+}
+
+func (c *Client) SendJsonMessage(data interface{}) error {
+	if c.wsConn == nil {
+		return ErrConnectionNotEstablished
+	}
+	c.wsMutex.Lock()
+	defer c.wsMutex.Unlock()
+	return c.wsConn.WriteJSON(data)
+}
+
 // sends message with status code 200 ("ok")
-func (c *Client) sendResponseMessage(msgType string, data interface{}) error {
-	return c.WsConn.WriteJSON(genericMessage{Type: msgType, Status: 200, Data: data})
+func (c *Client) SendDataMessage(msgType string, data interface{}) error {
+	return c.SendJsonMessage(genericMessage{Type: msgType, Status: 200, Data: data})
 }
 
 // sends error message
-func (c *Client) sendErrorMessage(msgType string, data string) error {
-	return c.WsConn.WriteJSON(genericMessage{Type: msgType, Status: 500, Data: data})
+func (c *Client) SendErrorMessage(msgType string, data interface{}) error {
+	return c.SendJsonMessage(genericMessage{Type: msgType, Status: 500, Data: data})
 }
 
 // send message to plugin handler and return response message
@@ -128,7 +152,22 @@ func (c *Client) handlePluginStatus(msg message) error {
 	// 	"client": c.ClientInfo,
 	// 	"dbhash": c.dbhashCmd != "",
 	// }
-	return c.sendResponseMessage("PluginStatus", data)
+	return c.SendDataMessage("PluginStatus", data)
+}
+
+func (c *Client) getProjectDirectory() (string, error) {
+	projDirMsg, err := c.propagateMessage("ProjectDirectory", nil)
+	if err != nil {
+		return "", fmt.Errorf("calling ProjectDirectory request: %w", err)
+	}
+	if projDirMsg.Status != 200 {
+		return "", fmt.Errorf("plugin error: %s", string(projDirMsg.Data))
+	}
+	var directory string
+	if err := json.Unmarshal(projDirMsg.Data, &directory); err != nil {
+		return "", fmt.Errorf("parsing ProjectDirectory response: %w", err)
+	}
+	return directory, nil
 }
 
 func (c *Client) handleProjectFiles(msg message) error {
@@ -137,18 +176,11 @@ func (c *Client) handleProjectFiles(msg message) error {
 		Files     []FileInfo `json:"files"`
 	}
 
-	projDirMsg, err := c.propagateMessage("ProjectDirectory", nil)
+	directory, err := c.getProjectDirectory()
 	if err != nil {
-		return errors.New("Failed to get project directory")
+		return c.SendErrorMessage(msg.Type, "Failed to get project directory: "+err.Error())
 	}
-	if projDirMsg.Status != 200 {
-		projDirMsg.Type = msg.Type
-		return c.WsConn.WriteJSON(projDirMsg)
-	}
-	var directory string
-	json.Unmarshal(projDirMsg.Data, &directory)
 	files, err := c.ListDir(directory, true)
-
 	if err != nil {
 		return err
 	}
@@ -156,7 +188,7 @@ func (c *Client) handleProjectFiles(msg message) error {
 		(*files)[i].Path = filepath.ToSlash(f.Path)
 	}
 	data := filesMsg{Directory: directory, Files: *files}
-	return c.sendResponseMessage(msg.Type, data)
+	return c.SendDataMessage(msg.Type, data)
 }
 
 func (c *Client) handleAbortUpload(msg message) error {
@@ -167,26 +199,21 @@ func (c *Client) handleAbortUpload(msg message) error {
 	return nil
 }
 
+type FilesParam struct {
+	Project string     `json:"project"`
+	Files   []FileInfo `json:"files"`
+}
+
 func (c *Client) handleUploadFiles(msg message) error {
-	type Params struct {
-		Project string     `json:"project"`
-		Files   []FileInfo `json:"files"`
-	}
-	var params Params
+	var params FilesParam
 	if err := json.Unmarshal(msg.Data, &params); err != nil {
 		return err
 	}
 
-	projDirMsg, err := c.propagateMessage("ProjectDirectory", nil)
+	directory, err := c.getProjectDirectory()
 	if err != nil {
-		return errors.New("Failed to get project directory")
+		return c.SendErrorMessage(msg.Type, "Failed to get project directory: "+err.Error())
 	}
-	if projDirMsg.Status != 200 {
-		projDirMsg.Type = msg.Type
-		return c.WsConn.WriteJSON(projDirMsg)
-	}
-	var directory string
-	json.Unmarshal(projDirMsg.Data, &directory)
 
 	go func() {
 		readBody, writeBody := io.Pipe()
@@ -274,7 +301,7 @@ func (c *Client) handleUploadFiles(msg message) error {
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
 			log.Printf("Failed to execute upload request: %s\n", err)
-			c.sendErrorMessage("UploadError", "Upload error")
+			c.SendErrorMessage("UploadError", "Upload error")
 			return
 		}
 		defer resp.Body.Close()
@@ -287,7 +314,7 @@ func (c *Client) handleUploadFiles(msg message) error {
 			log.Printf("Failed to read upload response: %s\n", err)
 		}
 		if resp.StatusCode >= 400 {
-			if err = c.sendErrorMessage("UploadError", string(respData)); err != nil {
+			if err = c.SendErrorMessage("UploadError", string(respData)); err != nil {
 				log.Printf("Failed to send error message: %s\n", err)
 			}
 		}
@@ -357,7 +384,7 @@ func (c *Client) Start(OnConnectionEstabilished func()) error {
 		OnConnectionEstabilished()
 	}
 
-	c.WsConn = wsConn
+	c.wsConn = wsConn
 	defer wsConn.Close()
 
 	// dbhash detection
@@ -394,14 +421,14 @@ func (c *Client) Start(OnConnectionEstabilished func()) error {
 			if ok {
 				if err := msgHandler(msg); err != nil {
 					log.Println(err)
-					c.sendErrorMessage(msg.Type, err.Error())
+					c.SendErrorMessage(msg.Type, err.Error())
 				}
 				continue
 			}
 			// possible issue if executed in different thread?
 			resp := c.OnMessageCallback(rawMessage)
 			if resp != "" {
-				c.WsConn.WriteMessage(websocket.TextMessage, []byte(resp))
+				c.SendRawMessage(websocket.TextMessage, []byte(resp))
 			}
 		}
 	}()
@@ -416,14 +443,15 @@ func (c *Client) Start(OnConnectionEstabilished func()) error {
 		case <-c.interrupt:
 			// Cleanly close the connection by sending a close message and then
 			// waiting (with timeout) for the server to close the connection.
-			err := c.WsConn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+			err := c.SendRawMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
 			if err != nil {
-				log.Println("WS close error:", err)
+				log.Println("WS sending close message:", err)
 				return nil
 			}
 			select {
 			case <-done:
-			case <-time.After(time.Second):
+			case <-time.After(3 * time.Second):
+				log.Println("stop timeout")
 			}
 			return nil
 		}
