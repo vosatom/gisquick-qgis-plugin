@@ -66,22 +66,21 @@ class GisquickWs():
         @ctypes.CFUNCTYPE(ctypes.c_char_p, ctypes.c_char_p)
         def callback_wrapper(msg):
             msg = json.loads(msg)
+            resp = {
+                "type": msg["type"]
+            }
+            if "id" in msg:
+                resp["id"] = msg["id"]
             try:
                 ret_value = callback(msg) or ""
-                resp = {
-                    "type": msg["type"],
-                    "status": 200,
-                    "data": ret_value
-                }
+                resp["status"] = 200
+                resp["data"] = ret_value
             except Exception as e:
                 # t = TracebackException.from_exception(e)
                 t = TracebackException.from_exception(e.__cause__ if e.__cause__ else e)
-                resp = {
-                    "type": msg["type"],
-                    "status": e.code if isinstance(e, WsError) else 500,
-                    "data": str(e),
-                    "traceback": ''.join(t.format())
-                }
+                resp["status"] = e.code if isinstance(e, WsError) else 500
+                resp["data"] = str(e)
+                resp["traceback"] = ''.join(t.format())
                 exc_type, exc_value, exc_traceback = sys.exc_info()
                 # tb = format_exception(
                 #     exc_type,
@@ -123,7 +122,8 @@ class GisquickWs():
         }
         if data is not None:
             msg["data"] = data
-        self._lib.SendMessage(go_string(json.dumps(msg)))
+        if self._lib:
+            self._lib.SendMessage(go_string(json.dumps(msg)))
 
 gisquick_ws = GisquickWs()
 
