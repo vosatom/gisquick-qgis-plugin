@@ -36,6 +36,7 @@ type Client struct {
 	wsConn            *websocket.Conn
 	wsMutex           sync.Mutex
 	interrupt         chan int
+	checksumCache     map[string]FileInfo
 	OnMessageCallback func([]byte) string
 	messageHandlers   map[string]messageHandler
 	cancelUpload      context.CancelFunc
@@ -75,12 +76,14 @@ type pluginStatusPayload struct {
 
 // Creates a new Gisquick plugin client
 func NewClient(url, user, password string) *Client {
-	c := Client{}
-	c.Server = url
-	c.User = user
-	c.Password = password
 	cookieJar, _ := cookiejar.New(nil)
-	c.httpClient = &http.Client{Jar: cookieJar}
+	c := Client{
+		Server:        url,
+		User:          user,
+		Password:      password,
+		checksumCache: make(map[string]FileInfo),
+		httpClient:    &http.Client{Jar: cookieJar},
+	}
 	c.registerHandlers()
 	return &c
 }

@@ -80,16 +80,24 @@ func (c *Client) ListDir(root string, checksum bool) ([]FileInfo, []FileInfo, er
 		if !info.IsDir() {
 			relPath := path[len(root)+1:]
 			if fileFilter(relPath) {
+				size := info.Size()
+				mtime := info.ModTime().Unix()
 				if temporaryFileRegex.Match([]byte(relPath)) {
-					tempFiles = append(tempFiles, FileInfo{relPath, "", info.Size(), info.ModTime().Unix()})
+					tempFiles = append(tempFiles, FileInfo{relPath, "", size, mtime})
 				} else {
 					hash := ""
 					if checksum {
-						if hash, err = c.Checksum(path); err != nil {
-							return err
+						item, inCache := c.checksumCache[path]
+						if inCache && item.Mtime == mtime && item.Size == size {
+							hash = item.Hash
+						} else {
+							if hash, err = c.Checksum(path); err != nil {
+								return err
+							}
+							c.checksumCache[path] = FileInfo{Hash: hash, Size: size, Mtime: mtime}
 						}
 					}
-					files = append(files, FileInfo{relPath, hash, info.Size(), info.ModTime().Unix()})
+					files = append(files, FileInfo{relPath, hash, size, mtime})
 				}
 			}
 		}
