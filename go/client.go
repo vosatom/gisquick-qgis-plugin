@@ -360,6 +360,7 @@ func (c *Client) fetchFile(project, projectDir string, finfo FileInfo) (err erro
 	if err := os.MkdirAll(destDir, 0777); err != nil {
 		return fmt.Errorf("creating file directory: %w", err)
 	}
+	delete(c.checksumCache, destPath)
 
 	u := path.Join("/api/project/file/", project, finfo.Path)
 	resp, err := c.httpClient.Get(c.Server + u)
@@ -455,6 +456,7 @@ func (c *Client) handleDeleteFiles(msg message) error {
 	var errPaths []string
 	for _, fpath := range params.Files {
 		absPath := filepath.Join(directory, filepath.FromSlash(fpath))
+		delete(c.checksumCache, absPath)
 		if err = os.Remove(absPath); err != nil {
 			errPaths = append(errPaths, fpath)
 		}
