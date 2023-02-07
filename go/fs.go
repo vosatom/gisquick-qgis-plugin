@@ -53,9 +53,9 @@ func (c *Client) ListDir(root string, checksum bool) ([]FileInfo, []FileInfo, er
 	var files []FileInfo = []FileInfo{}
 	var tempFiles []FileInfo = []FileInfo{}
 	temporaryFileRegex := regexp.MustCompile(`(?i).*\.(gpkg-wal|gpkg-shm)$`)
-	// excludeExtRegex := regexp.MustCompile(`(?i).*\.(gpkg-shm)$`)
+	excludedDir := ".gisquick" + string(filepath.Separator)
 	defaultFileFilter := func(path string) bool {
-		return !strings.HasSuffix(path, "~") // && !excludeExtRegex.Match([]byte(path))
+		return !strings.HasSuffix(path, "~") && !strings.HasPrefix(path, excludedDir)
 	}
 	fileFilter := defaultFileFilter
 
