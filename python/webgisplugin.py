@@ -8,6 +8,7 @@
 import os
 import re
 import sys
+import math
 import urllib
 import hashlib
 import platform
@@ -75,6 +76,9 @@ UnitsExtentPrecision = {
 
 def format_extent(extent, crs):
     if extent:
+        for n in extent:
+            if math.isinf(n):
+                return None
         unit = QgsUnitTypes.encodeUnit(crs.mapUnits())
         precision = UnitsExtentPrecision.get(unit, 3)
         return [round(v, precision) for v in extent]
