@@ -215,6 +215,7 @@ class WebGisPlugin(object):
 
         map_canvas = self.iface.mapCanvas()
         map_settings = map_canvas.mapSettings()
+        rm = project.relationManager()
         
         # wfs_info = {
         #     "query": QgsServerProjectUtils.wfsLayerIds(project),
@@ -369,6 +370,24 @@ class WebGisPlugin(object):
                         query=queryable,
                         edit=not(layer.readOnly()) and len(wfs_flags) > 1 # (query && (insert || update || delete))
                     ))
+
+                    relations = [r for r in rm.referencedRelations(layer) if r.isValid()]
+                    if relations:
+                        relations_data = []
+                        for rel in relations:
+                            rl = rel.referencingLayer()
+                            rl_fields = rel.referencingLayer().fields()
+                            referencing_fields = [rl_fields.at(fi).name() for fi in rel.referencingFields()]
+                            referenced_fields = [layer.fields().at(fi).name() for fi in rel.referencedFields()]
+                            relations_data.append({
+                                "name": rel.name(),
+                                "referencing_layer": rl.shortName() or rl.name(),
+                                "strength": rel.strength(),
+                                "referencing_fields": referencing_fields,
+                                "referenced_fields": referenced_fields,
+                            })
+                        meta["relations"] = relations_data
+
                 elif layer.type() == QgsMapLayerType.RasterLayer:
                     # meta["queryable"] = identifiable
                     flags.extend(flags_list(
@@ -385,6 +404,7 @@ class WebGisPlugin(object):
                     meta["options"] = opts
                 meta["flags"] = flags
                 data[lid] = meta
+
             except Exception as e:
                 if not skip_layers_with_error:
                     raise Exception("Failed to collect metadata of layer '%s'" % layer.name()) from e
