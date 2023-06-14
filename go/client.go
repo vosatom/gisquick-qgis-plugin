@@ -250,7 +250,7 @@ func (c *Client) handleUploadFiles(msg message) error {
 		errChan := make(chan error, 1)
 
 		go func() {
-			compressRegex := regexp.MustCompile("(?i).*\\.(qgs|xml|csv|svg|tif|dbf|json|sqlite|gpkg|geojson)$")
+			compressRegex := regexp.MustCompile("(?i).*\\.(qgs|xml|csv|svg|tif|shp|dbf|json|sqlite|gpkg|geojson)$")
 			defer writeBody.Close()
 
 			changesUpdated := false
