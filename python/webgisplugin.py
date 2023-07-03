@@ -508,10 +508,6 @@ class WebGisPlugin(object):
             }
         }
 
-        for name, val in data["projections"].items():
-            if name == "EPSG:5514":
-                data["projections"][name]["proj4"] = "+proj=krovak +lat_0=49.5 +lon_0=24.83333333333333 +alpha=30.28813972222222 +k=0.9999 +x_0=0 +y_0=0 +ellps=bessel +towgs84=542.5,89.2,456.9,5.517,2.275,5.516,6.96 +pm=greenwich +units=m +no_defs"
-
         if project.isDirty():
             data["dirty"] = True
 
