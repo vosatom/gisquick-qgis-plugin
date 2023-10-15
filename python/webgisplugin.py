@@ -331,12 +331,15 @@ class WebGisPlugin(object):
                     "extent": format_extent(extent, project.crs()),
                     "visible": project.layerTreeRoot().findLayer(lid).isVisible(), # or check if in mapCanvas.layers()
                     # "identifiable": identifiable,
-                    "metadata": {
+                    "metadata": clean_data({
                         # "title": layer.title(),
                         "abstract": layer.abstract(),
-                        "keyword_list": layer.keywordList()
-                    }
+                        "keyword_list": layer.keywordList(),
+                        "data_url": layer.dataUrl(),
+                        "data_url_format": layer.dataUrlFormat()
+                    })
                 }
+
                 # if layer in layers_order:
                 #     meta["drawing_order"] = layers_order.index(layer)
                 legend_url = layer.legendUrl()
