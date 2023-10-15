@@ -256,7 +256,7 @@ class WebGisPlugin(object):
 
                 # todo: handle 'delimitedtext', 'gpx'
                 source_params = None
-                if provider_type == "wms" or provider_type == "vectortile" or not provider_type:
+                if not provider_type or provider_type in ("wms", "vectortile"):
                     source_params = parse_qs(source)
                     source_params = {k: v if len(v) > 1 else v[0] for k, v in source_params.items()}
                     # uri = source_params["url"][0]
@@ -284,10 +284,15 @@ class WebGisPlugin(object):
                         "table": uri.table(),
                         "sql": uri.sql()
                     }
-                elif provider_type == "WFS":
+                elif provider_type in ("WFS", "arcgismapserver"):
                     uri = dp.uri()
                     # would be better to use uri.parameterKeys() in the future (since QGIS 3.26)
-                    params = ["url", "typename", "srsname", "version", "pagingEnabled", "restrictToRequestBBOX", "maxNumFeatures"]
+                    # if hasattr(uri, "parameterKeys"):
+                    #     params = uri.parameterKeys()
+                    if provider_type == "WFS":
+                        params = ["url", "typename", "srsname", "version", "pagingEnabled", "restrictToRequestBBOX", "maxNumFeatures"]
+                    else:
+                        params = ["url", "layer", "crs", "format"]
                     source_params = { p: uri.param(p) for p in params if uri.hasParam(p) }
                 elif provider_type in ("ogr", "gdal"):
                     # uri = "file://%s" % source.split("|")[0]
