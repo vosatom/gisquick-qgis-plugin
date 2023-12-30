@@ -5,7 +5,7 @@ import ctypes
 import _ctypes
 import platform
 from traceback import TracebackException, format_exception, format_exception_only
-
+from qgis.core import NULL
 
 system = platform.system()
 if system == "Linux":
@@ -24,6 +24,13 @@ class GoString(ctypes.Structure):
 
 def go_string(s):
     return GoString(s.encode("utf-8"), len(s))
+
+# Custom JSON encoder that can handle QGIS NULL values
+class GisquickJSONEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if obj == NULL:
+            return None
+        return super().default(obj)
 
 
 class WsError(Exception):
@@ -93,8 +100,7 @@ class GisquickWs():
                 # if e.__cause__:
                 #     t = TracebackException.from_exception(e.__cause__)
                 #     resp["traceback"] = "".join(t.format())
-
-            return json.dumps(resp).encode("utf-8")
+            return json.dumps(resp, cls=GisquickJSONEncoder).encode("utf-8")
 
         @ctypes.CFUNCTYPE(ctypes.c_void_p)
         def success_callback_wrapper():
